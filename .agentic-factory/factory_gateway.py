@@ -19,7 +19,7 @@ class GitHubContext:
         if not self.issue_num or not self.token:
             print(f"[Local Log Only] {message}")
             return
-        url = f"https://github.com{self.repo}/issues/{self.issue_num}/comments"
+        url = f"https://github.com/repos{self.repo}/issues/{self.issue_num}/comments"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Accept": "application/vnd.github+json",
