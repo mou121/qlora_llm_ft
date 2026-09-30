@@ -21,7 +21,7 @@ class GitHubContext:
             return
         url = f"https://github.com/repos{self.repo}/issues/{self.issue_num}/comments"
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"token {self.token}", # FIXED: Re-mapped to canonical authentication format
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28"
         }
@@ -31,19 +31,19 @@ class GitHubContext:
         except Exception as e:
             print(f"Failed to transmit comment: {e}")
 
-def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
+def generate_code_with_groq_native(context: GitHubContext, rules_content: str) -> str:
     """
-    Calls Groq API safely using fixed string cleanup routines.
+    Executes raw POST requests against the Groq API endpoint to bypass SDK 405 routing errors.
     """
-    from openai import OpenAI
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("GROQ_API_KEY environment secret is missing or empty.")
+        raise ValueError("CRITICAL: GROQ_API_KEY environment secret is missing or empty.")
 
-    client = OpenAI(
-        base_url="https://groq.com",
-        api_key=api_key
-    )
+    url = "https://groq.com"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
 
     existing_code = ""
     if os.path.exists("train.py"):
@@ -75,20 +75,25 @@ def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
     Generate the complete new version of train.py integrating the request cleanly.
     """
 
-    completion = client.chat.completions.create(
-        model="llama3-8b-8192", 
-        messages=[
+    payload = {
+        "model": "llama3-8b-8192",
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        temperature=0.1
-    )
+        "temperature": 0.1
+    }
 
-    raw_code = completion.choices.message.content
+    response = requests.post(url, headers=headers, json=payload)
     
-    # FIXED: Clean markdown formatting safely using string replacements instead of chained splits
+    if response.status_code != 200:
+        raise RuntimeError(f"Groq API returned an absolute failure status {response.status_code}: {response.text}")
+
+    res_json = response.json()
+    raw_code = res_json["choices"][0]["message"]["content"]
+    
+    # Strip away code formatting cleanly
     clean_code = raw_code.replace("```python", "").replace("```", "")
-        
     return clean_code.strip()
 
 def create_isolated_branch(ticket_id):
@@ -101,42 +106,38 @@ def create_isolated_branch(ticket_id):
 
 def commit_and_push(branch_name, ticket_id):
     subprocess.run(["git", "add", "train.py"], check=True)
-    
     status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
     if not status.stdout.strip():
         print("No structural changes detected. Skipping commit generation step.")
         return
-
     subprocess.run(["git", "commit", "-m", f"feat(agent): dynamically generated patch via Groq for #{ticket_id}"], check=True)
     subprocess.run(["git", "push", "origin", branch_name, "--force"], check=True)
 
 def open_pull_request(ctx, branch_name):
     url = f"https://github.com{ctx.repo}/pulls"
     headers = {
-        "Authorization": f"Bearer {ctx.token}", 
+        "Authorization": f"token {ctx.token}", 
         "Accept": "application/vnd.github+json"
     }
     payload = {
-        "title": f"Agent Resolve: {ctx.issue_title} (# {ctx.issue_num})",
+        "title": f"Agent Resolve: {ctx.issue_title} (#{ctx.issue_num})",
         "head": branch_name,
         "base": "main",
-        "body": f"Automated feature deployment powered by Groq Open Source Inference Core Engine.\n\nCloses #{ctx.issue_num}."
+        "body": f"Automated feature deployment powered by Groq Native Request Engine.\n\nCloses #{ctx.issue_num}."
     }
     res = requests.post(url, headers=headers, json=payload)
     if res.status_code == 201:
-        ctx.post_comment(f"🚀 **PR Created Successfully:** {res.json()['html_url']}")
+        print(f"PR Created Successfully: {res.json()['html_url']}")
     else:
         raise RuntimeError(f"GitHub Pull Request API returned error status {res.status_code}: {res.text}")
 
 def run_agentic_pipeline():
     ctx = GitHubContext()
-    print("--- PIPELINE START ENGINE LOG ---")
+    print("--- PIPELINE NATIVE START ENGINE LOG ---")
     
     if not ctx.issue_body:
         print("No issue payload context found. Exiting.")
         sys.exit(0)
-
-    ctx.post_comment("🤖 **Agentic SDLC Factory:** Pipeline boot validation initialized. Processing repository code parameters...")
 
     try:
         rules_content = ""
@@ -147,8 +148,8 @@ def run_agentic_pipeline():
         print("Executing local Git branch creation parameters...")
         active_branch = create_isolated_branch(ctx.issue_num or "test-run")
         
-        print("Querying external open-source LLM engine inference layer...")
-        generated_code = generate_code_with_groq(ctx, rules_content)
+        print("Querying Groq native endpoint...")
+        generated_code = generate_code_with_groq_native(ctx, rules_content)
         
         with open("train.py", "w") as f:
             f.write(generated_code)
@@ -156,13 +157,15 @@ def run_agentic_pipeline():
 
         print("Syncing git repositories upstream...")
         commit_and_push(active_branch, ctx.issue_num)
+        
+        ctx.post_comment("🤖 **Agentic SDLC Factory:** Core script patches completed. Generating open Pull Request review framework...")
         open_pull_request(ctx, active_branch)
         
     except Exception as e:
         error_stack = traceback.format_exc()
-        crash_report = f"❌ **Pipeline Failure Event:** `{str(e)}`\n\n```text\n{error_stack}\n```"
-        ctx.post_comment(crash_report)
         print(f"Pipeline crashed. Diagnostic stack:\n{error_stack}")
+        # Final desperate attempt to post logs to issue using local logging fallback prints
+        ctx.post_comment(f"❌ **Pipeline Failure Event:** `{str(e)}`\n\n```text\n{error_stack}\n```")
         sys.exit(1)
 
 if __name__ == "__main__":
