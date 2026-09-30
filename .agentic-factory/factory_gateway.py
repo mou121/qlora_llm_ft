@@ -115,7 +115,7 @@ def commit_and_push(branch_name, ticket_id):
     subprocess.run(["git", "push", "origin", branch_name, "--force"], check=True)
 
 def open_pull_request(ctx, branch_name):
-    url = f"https://github.com{ctx.repo}/pulls"
+    url = f"https://github.com/repos{ctx.repo}/pulls"
     headers = {
         "Authorization": f"Bearer {ctx.token}", 
         "Accept": "application/vnd.github+json"
