@@ -83,7 +83,7 @@ def generate_code_with_groq_sdk(context: GitHubContext, rules_content: str) -> s
 
     # Native SDK completion loop invocation using official model parameters
     completion = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
