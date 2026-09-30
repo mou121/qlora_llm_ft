@@ -1,0 +1,41 @@
+name: Agentic Factory Pipeline
+
+on:
+  issues:
+    types: [opened, edited]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  run-factory:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Allows the agent to push code branches
+      issues: write     # Allows the agent to comment on/create issues
+      pull-requests: write # Allows the agent to open PRs
+      
+    steps:
+      - name: Checkout Repository Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Factory Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-python: '3.11'
+          cache: 'pip'
+
+      - name: Install Repo Constraints & Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest flake8 requests pyyaml
+
+      - name: Execute Agent Factory Pipeline
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          EVENT_NAME: ${{ github.eventName }}
+        run: |
+          python .agentic-factory/factory_gateway.py
