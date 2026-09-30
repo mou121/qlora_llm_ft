@@ -95,7 +95,8 @@ def main():
         logging_dir="logs",
         num_train_epochs=3,
         save_strategy="epoch",
-        save_total_limit=2,
+        save_total_limit=1,          # Keep only the most recent checkpoint
+        load_best_model_at_end=True, # Load the best model at the end of training
         logging_steps=10,
         learning_rate=2e-4,
         report_to="none",
