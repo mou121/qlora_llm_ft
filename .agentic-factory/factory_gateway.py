@@ -8,7 +8,7 @@ import subprocess
 @dataclass
 class GitHubContext:
     token: str = os.getenv("GITHUB_TOKEN")
-    repo: str = "/mou121/qlora_llm_ft"
+    repo: str = "mou121/qlora_llm_ft"
     issue_num: str = os.getenv("ISSUE_NUMBER")
     issue_body: str = os.getenv("ISSUE_BODY")
     event_type: str = os.getenv("EVENT_NAME")
