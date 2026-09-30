@@ -121,9 +121,11 @@ def open_pull_request(ctx, branch_name):
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28"
     }
+    # FIXED: Explicitly scope the head branch with your username to establish a proper cross-branch merge target
+    explicit_head_target = f"mou121:{branch_name}"
     payload = {
         "title": f"Agent Resolve: {ctx.issue_title} (#{ctx.issue_num})",
-        "head": branch_name,
+        "head": explicit_head_target,
         "base": "main",
         "body": f"Automated feature deployment powered by Official Groq Core Engine SDK.\n\nCloses #{ctx.issue_num}."
     }
