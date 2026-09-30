@@ -25,8 +25,8 @@ jobs:
 
       - name: Install Runtime Core Packages
         run: |
-          pip install requests pyyaml
-
+          pip install requests pyyaml groq
+          
       - name: Execute Agent Factory Pipeline
         env:
           # FIXED: Pass secrets environment scopes directly into runtime maps
