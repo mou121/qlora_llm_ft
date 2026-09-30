@@ -118,7 +118,8 @@ def open_pull_request(ctx, branch_name):
     url = f"https://github.com/repos{ctx.repo}/pulls"
     headers = {
         "Authorization": f"Bearer {ctx.token}", 
-        "Accept": "application/vnd.github+json"
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
     }
     payload = {
         "title": f"Agent Resolve: {ctx.issue_title} (#{ctx.issue_num})",
@@ -127,11 +128,17 @@ def open_pull_request(ctx, branch_name):
         "body": f"Automated feature deployment powered by Official Groq Core Engine SDK.\n\nCloses #{ctx.issue_num}."
     }
     res = requests.post(url, headers=headers, json=payload)
+    
     if res.status_code == 201:
         print(f"PR Created Successfully: {res.json()['html_url']}")
         ctx.post_comment(f"🚀 **PR Created Successfully:** {res.json()['html_url']}")
+    elif res.status_code == 422:
+        # FIXED: Catching the 422 condition gracefully instead of hard crashing
+        print("PR verification returned 422: Branch already has an active PR or code holds no fresh differences.")
+        ctx.post_comment(f"ℹ️ **Pipeline Synchronization Note:** Code changes pushed directly upstream to branch `{branch_name}`. An active Pull Request may already exist, or there are no new modifications to compare against `main`.")
     else:
         raise RuntimeError(f"GitHub Pull Request API returned error status {res.status_code}: {res.text}")
+
 
 def run_agentic_pipeline():
     ctx = GitHubContext()
