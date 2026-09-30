@@ -4,7 +4,7 @@ import json
 import requests
 from dataclasses import dataclass
 import subprocess
-import traceback  # Crucial for capturing full error logs
+import traceback
 
 @dataclass
 class GitHubContext:
@@ -33,7 +33,7 @@ class GitHubContext:
 
 def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
     """
-    Calls Groq API safely using the official OpenAI sdk library bindings.
+    Calls Groq API safely using fixed string cleanup routines.
     """
     from openai import OpenAI
     api_key = os.getenv("GROQ_API_KEY")
@@ -86,22 +86,15 @@ def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
 
     raw_code = completion.choices.message.content
     
-    # Clean up formatting safely
-    if "```python" in raw_code:
-        raw_code = raw_code.split("```python")[1].split("```")[0]
-    elif "```" in raw_code:
-        raw_code = raw_code.split("```")[1].split("```")[0]
+    # FIXED: Clean markdown formatting safely using string replacements instead of chained splits
+    clean_code = raw_code.replace("```python", "").replace("```", "")
         
-    return raw_code.strip()
+    return clean_code.strip()
 
 def create_isolated_branch(ticket_id):
     branch_name = f"agent/feature-issue-{ticket_id}"
-    
-    # Configure workspace identity parameters
     subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=True)
     subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@://github.com"], check=True)
-    
-    # Switch out of detached HEAD states natively
     subprocess.run(["git", "checkout", "-b", branch_name], check=True)
     print(f"Safe workspace branch created locally: {branch_name}")
     return branch_name
@@ -124,7 +117,7 @@ def open_pull_request(ctx, branch_name):
         "Accept": "application/vnd.github+json"
     }
     payload = {
-        "title": f"Agent Resolve: {ctx.issue_title} (#{ctx.issue_num})",
+        "title": f"Agent Resolve: {ctx.issue_title} (# {ctx.issue_num})",
         "head": branch_name,
         "base": "main",
         "body": f"Automated feature deployment powered by Groq Open Source Inference Core Engine.\n\nCloses #{ctx.issue_num}."
@@ -143,54 +136,33 @@ def run_agentic_pipeline():
         print("No issue payload context found. Exiting.")
         sys.exit(0)
 
-    # 1. Initial Check-in Comment
     ctx.post_comment("🤖 **Agentic SDLC Factory:** Pipeline boot validation initialized. Processing repository code parameters...")
 
     try:
-        # Load rules boundaries
         rules_content = ""
         if os.path.exists(".agentic-factory/agent-rules.md"):
             with open(".agentic-factory/agent-rules.md", "r") as f:
                 rules_content = f.read()
 
-        # 2. Workspace Branch Step
         print("Executing local Git branch creation parameters...")
         active_branch = create_isolated_branch(ctx.issue_num or "test-run")
         
-        # 3. Code Generation Step
         print("Querying external open-source LLM engine inference layer...")
         generated_code = generate_code_with_groq(ctx, rules_content)
         
-        # 4. File Modification Step
         with open("train.py", "w") as f:
             f.write(generated_code)
         print("Code successfully outputted onto local system disk.")
 
-        # 5. Push and PR synchronization Steps
         print("Syncing git repositories upstream...")
         commit_and_push(active_branch, ctx.issue_num)
         open_pull_request(ctx, active_branch)
         
     except Exception as e:
-        # --- CRITICAL ERROR CAPTURE SYSTEM ---
-        # Extracts the entire system crash trajectory
         error_stack = traceback.format_exc()
-        
-        # Formulate a structured markdown bug trace report comment
-        crash_report = f"""
-❌ **Pipeline Processing Hard-Crash Exception Detected!**
-
-The agentic execution loop broke before code serialization could map upstream.
-
-**Error Summary:** `{str(e)}`
-**Execution Diagnostic Traceback:**
-```text
-{error_stack}
-```
-"""
-        # Send the exact crash trace directly into your open GitHub issue thread
+        crash_report = f"❌ **Pipeline Failure Event:** `{str(e)}`\n\n```text\n{error_stack}\n```"
         ctx.post_comment(crash_report)
-        print(f"Pipeline crashed. Transmitted Diagnostic crash report to issue thread:\n{error_stack}")
+        print(f"Pipeline crashed. Diagnostic stack:\n{error_stack}")
         sys.exit(1)
 
 if __name__ == "__main__":
