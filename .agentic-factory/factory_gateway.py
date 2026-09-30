@@ -77,7 +77,7 @@ class GitHubContext:
         if not self.issue_num or not self.token:
             print(f"[Local Log Only] {message}")
             return
-        url = f"https://github.com/repos{self.repo}/issues/{self.issue_num}/comments"
+        url = f"https://api.github.com/repos/{self.repo}/issues/{self.issue_num}/comments"
         
         # FIXED: Re-mapped to canonical modern bearer authorization format to clear 404 blocks
         headers = {
@@ -189,7 +189,10 @@ def create_isolated_branch(ticket_id):
     return branch_name
 
 def commit_and_push(branch_name, ticket_id):
-    subprocess.run(["git", "add", "train.py"], check=True)
+    # actions/cache's write scope is capped at the repo/org level in this
+    # environment, so the response cache is persisted through git (contents:
+    # write) instead - the same mechanism already used for train.py.
+    subprocess.run(["git", "add", "train.py", CACHE_PATH], check=True)
     status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
     if not status.stdout.strip():
         print("No structural changes detected. Skipping commit generation step.")

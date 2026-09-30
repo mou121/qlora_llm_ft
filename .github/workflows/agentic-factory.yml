@@ -11,7 +11,6 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-      actions: write
 
     steps:
       - name: Checkout Repository Code
@@ -27,14 +26,6 @@ jobs:
       - name: Install Runtime Core Packages
         run: |
           pip install requests pyyaml groq
-
-      - name: Restore Pipeline Token-Usage Cache
-        uses: actions/cache@v4
-        with:
-          path: .agentic-factory/.pipeline_cache.json
-          key: agentic-factory-cache-${{ github.run_id }}
-          restore-keys: |
-            agentic-factory-cache-
 
       - name: Execute Agent Factory Pipeline
         env:
