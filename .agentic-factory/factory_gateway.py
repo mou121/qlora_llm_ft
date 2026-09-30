@@ -4,7 +4,7 @@ import json
 import requests
 from dataclasses import dataclass
 import subprocess
-from openai import OpenAI
+import traceback  # Crucial for capturing full error logs
 
 @dataclass
 class GitHubContext:
@@ -25,15 +25,20 @@ class GitHubContext:
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28"
         }
-        requests.post(url, headers=headers, json={"body": message})
+        try:
+            res = requests.post(url, headers=headers, json={"body": message})
+            print(f"[GitHub API Status]: {res.status_code}")
+        except Exception as e:
+            print(f"Failed to transmit comment: {e}")
 
 def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
     """
-    Calls Groq Llama 3 API to generate production-ready code.
+    Calls Groq API safely using the official OpenAI sdk library bindings.
     """
+    from openai import OpenAI
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("CRITICAL: GROQ_API_KEY environment variable is missing.")
+        raise ValueError("GROQ_API_KEY environment secret is missing or empty.")
 
     client = OpenAI(
         base_url="https://groq.com",
@@ -46,14 +51,14 @@ def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
             existing_code = f.read()
 
     system_prompt = f"""
-    You are an automated code generator for a software pipeline.
-    Your task is to write clean, production-ready Python code to resolve the issue.
+    You are an automated code generator for an agentic SDLC pipeline.
+    Write clean, production-ready Python code to solve the issue.
     
-    CRITICAL PROJECT RULES:
+    RULES:
     {rules_content}
     
-    OUTPUT FORMAT RULES:
-    - Return ONLY valid Python code block contents.
+    OUTPUT FORMAT:
+    - Return ONLY executable Python code.
     - Do NOT wrap code inside markdown blocks like ```python ... ```.
     - Do NOT give conversational text or explanations.
     """
@@ -71,7 +76,7 @@ def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
     """
 
     completion = client.chat.completions.create(
-        model="llama3-8b-8192",  # Blazing fast, highly capable target model
+        model="llama3-8b-8192", 
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -81,7 +86,7 @@ def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
 
     raw_code = completion.choices.message.content
     
-    # Safety Check: Clean away markdown blocks if the LLM slips up and returns them anyway
+    # Clean up formatting safely
     if "```python" in raw_code:
         raw_code = raw_code.split("```python")[1].split("```")[0]
     elif "```" in raw_code:
@@ -92,20 +97,18 @@ def generate_code_with_groq(context: GitHubContext, rules_content: str) -> str:
 def create_isolated_branch(ticket_id):
     branch_name = f"agent/feature-issue-{ticket_id}"
     
-    # FIX: Explicitly configure global tracking identity BEFORE committing
+    # Configure workspace identity parameters
     subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=True)
     subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@://github.com"], check=True)
     
-    # Switch out of detached HEAD safely using standard branch creation checkout loops
+    # Switch out of detached HEAD states natively
     subprocess.run(["git", "checkout", "-b", branch_name], check=True)
-    print(f"Safe workspace branch created: {branch_name}")
+    print(f"Safe workspace branch created locally: {branch_name}")
     return branch_name
 
 def commit_and_push(branch_name, ticket_id):
-    # Stage target file modification matrices
     subprocess.run(["git", "add", "train.py"], check=True)
     
-    # Check if there are actual diff changes to prevent empty commit abort codes
     status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
     if not status.stdout.strip():
         print("No structural changes detected. Skipping commit generation step.")
@@ -130,37 +133,64 @@ def open_pull_request(ctx, branch_name):
     if res.status_code == 201:
         ctx.post_comment(f"🚀 **PR Created Successfully:** {res.json()['html_url']}")
     else:
-        ctx.post_comment(f"⚠️ **PR Open Delay:** Branch successfully updated. PR initialization failed with logs: {res.text}")
+        raise RuntimeError(f"GitHub Pull Request API returned error status {res.status_code}: {res.text}")
 
 def run_agentic_pipeline():
     ctx = GitHubContext()
+    print("--- PIPELINE START ENGINE LOG ---")
+    
     if not ctx.issue_body:
         print("No issue payload context found. Exiting.")
         sys.exit(0)
 
-    rules_content = ""
-    if os.path.exists(".agentic-factory/agent-rules.md"):
-        with open(".agentic-factory/agent-rules.md", "r") as f:
-            rules_content = f.read()
-
-    ctx.post_comment("🤖 **Agentic SDLC Factory:** Initializing Groq API interface pipeline...")
+    # 1. Initial Check-in Comment
+    ctx.post_comment("🤖 **Agentic SDLC Factory:** Pipeline boot validation initialized. Processing repository code parameters...")
 
     try:
-        # 1. Branch setup with identification injects
+        # Load rules boundaries
+        rules_content = ""
+        if os.path.exists(".agentic-factory/agent-rules.md"):
+            with open(".agentic-factory/agent-rules.md", "r") as f:
+                rules_content = f.read()
+
+        # 2. Workspace Branch Step
+        print("Executing local Git branch creation parameters...")
         active_branch = create_isolated_branch(ctx.issue_num or "test-run")
         
-        # 2. Open-source code synthesis loop step
+        # 3. Code Generation Step
+        print("Querying external open-source LLM engine inference layer...")
         generated_code = generate_code_with_groq(ctx, rules_content)
         
+        # 4. File Modification Step
         with open("train.py", "w") as f:
             f.write(generated_code)
+        print("Code successfully outputted onto local system disk.")
 
-        # 3. Synchronize local workspaces upstream
+        # 5. Push and PR synchronization Steps
+        print("Syncing git repositories upstream...")
         commit_and_push(active_branch, ctx.issue_num)
         open_pull_request(ctx, active_branch)
         
     except Exception as e:
-        ctx.post_comment(f"❌ **Pipeline Loop Exception:** Work aborted due to exception: {str(e)}")
+        # --- CRITICAL ERROR CAPTURE SYSTEM ---
+        # Extracts the entire system crash trajectory
+        error_stack = traceback.format_exc()
+        
+        # Formulate a structured markdown bug trace report comment
+        crash_report = f"""
+❌ **Pipeline Processing Hard-Crash Exception Detected!**
+
+The agentic execution loop broke before code serialization could map upstream.
+
+**Error Summary:** `{str(e)}`
+**Execution Diagnostic Traceback:**
+```text
+{error_stack}
+```
+"""
+        # Send the exact crash trace directly into your open GitHub issue thread
+        ctx.post_comment(crash_report)
+        print(f"Pipeline crashed. Transmitted Diagnostic crash report to issue thread:\n{error_stack}")
         sys.exit(1)
 
 if __name__ == "__main__":
