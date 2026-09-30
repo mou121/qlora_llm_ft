@@ -1,10 +1,68 @@
 import os
 import sys
 import json
+import hashlib
 import requests
 from dataclasses import dataclass
 import subprocess
 import traceback
+
+# Groq's API has no server-side prompt caching (unlike Anthropic's cache_control),
+# so token savings have to be done at the application level:
+# 1. Response cache keyed by a hash of the exact prompt inputs - skips the API
+#    call entirely (100% token savings) when an issue is re-triggered (e.g. a
+#    GitHub "edited" event that didn't change the meaningful content) with an
+#    unchanged train.py.
+# 2. Whitespace normalization of the injected file - cheap, safe token
+#    reduction that also makes cache hits survive trivial formatting noise.
+CACHE_PATH = ".agentic-factory/.pipeline_cache.json"
+CACHE_MAX_ENTRIES = 25
+
+
+def normalize_code(code: str) -> str:
+    """Strip trailing whitespace and collapse runs of blank lines.
+
+    Reduces prompt tokens sent for a noisy file and keeps the cache hash
+    stable across trivial whitespace-only edits.
+    """
+    lines = [line.rstrip() for line in code.splitlines()]
+    normalized_lines = []
+    blank_run = 0
+    for line in lines:
+        if line == "":
+            blank_run += 1
+            if blank_run > 1:
+                continue
+        else:
+            blank_run = 0
+        normalized_lines.append(line)
+    return "\n".join(normalized_lines).strip()
+
+
+def load_cache() -> dict:
+    if not os.path.exists(CACHE_PATH):
+        return {}
+    try:
+        with open(CACHE_PATH, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_cache(cache: dict) -> None:
+    # Bound the cache so it can't grow unboundedly across runs.
+    if len(cache) > CACHE_MAX_ENTRIES:
+        for key in list(cache.keys())[: len(cache) - CACHE_MAX_ENTRIES]:
+            del cache[key]
+    os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+    with open(CACHE_PATH, "w") as f:
+        json.dump(cache, f)
+
+
+def cache_key(rules_content: str, issue_title: str, issue_body: str, normalized_code: str) -> str:
+    payload = "␟".join([rules_content, issue_title, issue_body or "", normalized_code])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 
 @dataclass
 class GitHubContext:
@@ -33,7 +91,7 @@ class GitHubContext:
         except Exception as e:
             print(f"Failed to transmit comment: {e}")
 
-def generate_code_with_groq_sdk(context: GitHubContext, rules_content: str) -> str:
+def generate_code_with_groq_sdk(context: GitHubContext, rules_content: str) -> tuple[str, dict]:
     """
     Uses the official Groq SDK library wrapper to guarantee clean HTTP transmission.
     """
@@ -55,6 +113,17 @@ def generate_code_with_groq_sdk(context: GitHubContext, rules_content: str) -> s
     if os.path.exists("train.py"):
         with open("train.py", "r") as f:
             existing_code = f.read()
+    existing_code = normalize_code(existing_code)
+
+    cache = load_cache()
+    key = cache_key(rules_content, context.issue_title, context.issue_body, existing_code)
+    cached_entry = cache.get(key)
+    if cached_entry:
+        print("[Cache] Hit - reusing prior generation, skipping Groq call entirely.")
+        cached_usage = dict(cached_entry["token_usage"])
+        cached_usage["cache_hit"] = True
+        cached_usage["tokens_saved"] = cached_usage["total_tokens"]
+        return cached_entry["generated_code"], cached_usage
 
     system_prompt = f"""
     You are an automated code generator for an agentic SDLC pipeline.
@@ -92,10 +161,24 @@ def generate_code_with_groq_sdk(context: GitHubContext, rules_content: str) -> s
     )
 
     raw_code = completion.choices[0].message.content
-    
+
+    usage = completion.usage
+    token_usage = {
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+        "existing_train_py_chars": len(existing_code),
+        "cache_hit": False,
+        "tokens_saved": 0,
+    }
+
     # Strip any markdown structural strings cleanly
-    clean_code = raw_code.replace("```python", "").replace("```", "")
-    return clean_code.strip()
+    clean_code = raw_code.replace("```python", "").replace("```", "").strip()
+
+    cache[key] = {"generated_code": clean_code, "token_usage": token_usage}
+    save_cache(cache)
+
+    return clean_code, token_usage
 
 def create_isolated_branch(ticket_id):
     branch_name = f"agent/feature-issue-{ticket_id}"
@@ -290,8 +373,40 @@ def run_agentic_pipeline():
         active_branch = create_isolated_branch(ctx.issue_num or "test-run")
         
         print("Querying Groq SDK endpoint framework...")
-        generated_code = generate_code_with_groq_sdk(ctx, rules_content)
-        
+        generated_code, token_usage = generate_code_with_groq_sdk(ctx, rules_content)
+
+        if token_usage.get("cache_hit"):
+            print(
+                f"[Token Usage] Cache hit - 0 API tokens used this run "
+                f"(would have cost {token_usage['tokens_saved']} tokens)."
+            )
+            ctx.post_comment(
+                "⚡ **Token Usage for this run:** cache hit - reused a prior "
+                "generation for identical inputs.\n"
+                f"- Tokens used: 0\n"
+                f"- Tokens saved: {token_usage['tokens_saved']}"
+            )
+        else:
+            print(
+                "[Token Usage] prompt_tokens={prompt_tokens} "
+                "completion_tokens={completion_tokens} "
+                "total_tokens={total_tokens} "
+                "(existing train.py was {existing_train_py_chars} chars after "
+                "whitespace normalization, resent in full on every cache miss)".format(**token_usage)
+            )
+            ctx.post_comment(
+                "📊 **Token Usage for this run:**\n"
+                f"- Prompt tokens: {token_usage['prompt_tokens']}\n"
+                f"- Completion tokens: {token_usage['completion_tokens']}\n"
+                f"- Total tokens: {token_usage['total_tokens']}\n\n"
+                f"_Note: the full existing `train.py` "
+                f"({token_usage['existing_train_py_chars']} chars, whitespace-"
+                "normalized) is resent on cache misses — there is no diffing, "
+                "so prompt_tokens grows with file size, not with the size of "
+                "the requested change. Identical (issue, file) pairs will hit "
+                "the cache and cost 0 tokens on repeat runs._"
+            )
+
         with open("train.py", "w") as f:
             f.write(generated_code)
         print("Code successfully outputted onto local system disk.")

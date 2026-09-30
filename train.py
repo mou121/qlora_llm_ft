@@ -11,7 +11,6 @@ from transformers import (
     DataCollatorForSeq2Seq,
 )
 from peft import get_peft_model, LoraConfig, TaskType
-import bitsandbytes as bnb
 
 
 def plot_loss(trainer, output_path: str = "./plots/loss_chart.png"):
@@ -46,10 +45,39 @@ def plot_loss(trainer, output_path: str = "./plots/loss_chart.png"):
     plt.legend()
     plt.tight_layout()
 
+<<<<<<< HEAD
     # Save the figure
     plt.savefig(output_path)
     plt.close()
 
+=======
+# No CUDA GPU here, so 4-bit bitsandbytes quantization isn't available.
+# Load in fp16 and let the Trainer place it on MPS (Apple GPU) if present.
+model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=torch.float16)
+peft_config = LoraConfig(
+    r=8,
+    lora_alpha=32,
+    target_modules=["q_proj", "v_proj"],
+    lora_dropout=0.1,
+    bias="none",
+    task_type=TaskType.CAUSAL_LM
+)
+model = get_peft_model(model, peft_config)
+
+args = TrainingArguments(
+    output_dir="qlora-mistral-output",
+    per_device_train_batch_size=1,
+    gradient_accumulation_steps=4,
+    warmup_steps=10,
+    logging_dir="logs",
+    num_train_epochs=3,
+    save_strategy="epoch",
+    save_total_limit=2,
+    logging_steps=10,
+    learning_rate=2e-4,
+    report_to="none"
+)
+>>>>>>> 1c1a62a (fix)
 
 def main():
     model_name = "mistralai/Mistral-7B-v0.1"
