@@ -45,12 +45,10 @@ def plot_loss(trainer, output_path: str = "./plots/loss_chart.png"):
     plt.legend()
     plt.tight_layout()
 
-<<<<<<< HEAD
     # Save the figure
     plt.savefig(output_path)
     plt.close()
 
-=======
 # No CUDA GPU here, so 4-bit bitsandbytes quantization isn't available.
 # Load in fp16 and let the Trainer place it on MPS (Apple GPU) if present.
 model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=torch.float16)
@@ -77,7 +75,6 @@ args = TrainingArguments(
     learning_rate=2e-4,
     report_to="none"
 )
->>>>>>> 1c1a62a (fix)
 
 def main():
     model_name = "mistralai/Mistral-7B-v0.1"
