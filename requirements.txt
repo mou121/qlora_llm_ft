@@ -3,3 +3,6 @@ datasets
 peft==0.10.0
 bitsandbytes
 accelerate
+openai
+requests
+pyyaml
