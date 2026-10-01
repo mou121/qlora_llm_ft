@@ -1,7 +1,7 @@
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel, PeftConfig
 
-peft_model_id = "output_dir"
+peft_model_id = "qlora-mistral-output"
 
 config = PeftConfig.from_pretrained(peft_model_id)
 model = AutoModelForCausalLM.from_pretrained(config.base_model_name_or_path)

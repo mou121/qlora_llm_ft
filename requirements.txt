@@ -6,3 +6,4 @@ accelerate
 openai
 requests
 pyyaml
+matplotlib
