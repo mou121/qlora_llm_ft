@@ -101,7 +101,6 @@ def main() -> None:
         output_dir=OUTPUT_DIR,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
-        warmup_ratio=0.03,
         logging_dir="logs",
         num_train_epochs=3,
         save_strategy="epoch",
