@@ -17,6 +17,7 @@ import traceback
 #    reduction that also makes cache hits survive trivial formatting noise.
 CACHE_PATH = ".agentic-factory/.pipeline_cache.json"
 CACHE_MAX_ENTRIES = 25
+STATS_KEY = "__stats__"
 
 
 def normalize_code(code: str) -> str:
@@ -50,13 +51,32 @@ def load_cache() -> dict:
 
 
 def save_cache(cache: dict) -> None:
-    # Bound the cache so it can't grow unboundedly across runs.
-    if len(cache) > CACHE_MAX_ENTRIES:
-        for key in list(cache.keys())[: len(cache) - CACHE_MAX_ENTRIES]:
+    # Bound the cache so it can't grow unboundedly across runs. STATS_KEY is
+    # cumulative bookkeeping, not a generation entry, so it's never evicted.
+    entry_keys = [k for k in cache if k != STATS_KEY]
+    if len(entry_keys) > CACHE_MAX_ENTRIES:
+        for key in entry_keys[: len(entry_keys) - CACHE_MAX_ENTRIES]:
             del cache[key]
     os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
     with open(CACHE_PATH, "w") as f:
         json.dump(cache, f)
+
+
+def record_stats(cache: dict, tokens_used: int, tokens_saved: int, cache_hit: bool) -> dict:
+    """Update the cumulative token-usage counters stored under STATS_KEY."""
+    stats = cache.setdefault(
+        STATS_KEY,
+        {
+            "total_tokens_used": 0,
+            "total_tokens_saved": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+        },
+    )
+    stats["total_tokens_used"] += tokens_used
+    stats["total_tokens_saved"] += tokens_saved
+    stats["cache_hits" if cache_hit else "cache_misses"] += 1
+    return stats
 
 
 def cache_key(rules_content: str, issue_title: str, issue_body: str, normalized_code: str) -> str:
@@ -123,6 +143,10 @@ def generate_code_with_groq_sdk(context: GitHubContext, rules_content: str) -> t
         cached_usage = dict(cached_entry["token_usage"])
         cached_usage["cache_hit"] = True
         cached_usage["tokens_saved"] = cached_usage["total_tokens"]
+        stats = record_stats(cache, tokens_used=0, tokens_saved=cached_usage["tokens_saved"], cache_hit=True)
+        cached_usage["cumulative_tokens_used"] = stats["total_tokens_used"]
+        cached_usage["cumulative_tokens_saved"] = stats["total_tokens_saved"]
+        save_cache(cache)
         return cached_entry["generated_code"], cached_usage
 
     system_prompt = f"""
@@ -176,6 +200,9 @@ def generate_code_with_groq_sdk(context: GitHubContext, rules_content: str) -> t
     clean_code = raw_code.replace("```python", "").replace("```", "").strip()
 
     cache[key] = {"generated_code": clean_code, "token_usage": token_usage}
+    stats = record_stats(cache, tokens_used=token_usage["total_tokens"], tokens_saved=0, cache_hit=False)
+    token_usage["cumulative_tokens_used"] = stats["total_tokens_used"]
+    token_usage["cumulative_tokens_saved"] = stats["total_tokens_saved"]
     save_cache(cache)
 
     return clean_code, token_usage
@@ -378,30 +405,39 @@ def run_agentic_pipeline():
         print("Querying Groq SDK endpoint framework...")
         generated_code, token_usage = generate_code_with_groq_sdk(ctx, rules_content)
 
+        cumulative_used = token_usage["cumulative_tokens_used"]
+        cumulative_saved = token_usage["cumulative_tokens_saved"]
+
         if token_usage.get("cache_hit"):
             print(
                 f"[Token Usage] Cache hit - 0 API tokens used this run "
-                f"(would have cost {token_usage['tokens_saved']} tokens)."
+                f"(would have cost {token_usage['tokens_saved']} tokens). "
+                f"Cumulative: used={cumulative_used} saved={cumulative_saved}."
             )
             ctx.post_comment(
                 "⚡ **Token Usage for this run:** cache hit - reused a prior "
                 "generation for identical inputs.\n"
                 f"- Tokens used: 0\n"
-                f"- Tokens saved: {token_usage['tokens_saved']}"
+                f"- Tokens saved: {token_usage['tokens_saved']}\n\n"
+                f"**Cumulative across all runs:** {cumulative_used} tokens used, "
+                f"{cumulative_saved} tokens saved by caching."
             )
         else:
             print(
-                "[Token Usage] prompt_tokens={prompt_tokens} "
-                "completion_tokens={completion_tokens} "
-                "total_tokens={total_tokens} "
-                "(existing train.py was {existing_train_py_chars} chars after "
-                "whitespace normalization, resent in full on every cache miss)".format(**token_usage)
+                f"[Token Usage] prompt_tokens={token_usage['prompt_tokens']} "
+                f"completion_tokens={token_usage['completion_tokens']} "
+                f"total_tokens={token_usage['total_tokens']} "
+                f"(existing train.py was {token_usage['existing_train_py_chars']} chars after "
+                "whitespace normalization, resent in full on every cache miss). "
+                f"Cumulative: used={cumulative_used} saved={cumulative_saved}."
             )
             ctx.post_comment(
                 "📊 **Token Usage for this run:**\n"
                 f"- Prompt tokens: {token_usage['prompt_tokens']}\n"
                 f"- Completion tokens: {token_usage['completion_tokens']}\n"
                 f"- Total tokens: {token_usage['total_tokens']}\n\n"
+                f"**Cumulative across all runs:** {cumulative_used} tokens used, "
+                f"{cumulative_saved} tokens saved by caching.\n\n"
                 f"_Note: the full existing `train.py` "
                 f"({token_usage['existing_train_py_chars']} chars, whitespace-"
                 "normalized) is resent on cache misses — there is no diffing, "
